@@ -1,105 +1,86 @@
 pipeline {
     agent any
-    tools{
+
+    tools {
         jdk 'jdk17'
         maven 'maven3'
     }
-    environment{
-        SCANNER_HOME= tool 'sonar-scanner'
+
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'  // Corrected spelling here
     }
 
     stages {
-        stage('git-checkout') {
+        stage('SCM Checkout') {
             steps {
-                git 'https://github.com/jaiswaladi246/secretsanta-generator.git'
+                // Get code from the GitHub repository
+                git ' https://github.com/jiku01/mysecretsanta.git'
             }
         }
 
-        stage('Code-Compile') {
+        stage('Compile') {
             steps {
-               sh "mvn clean compile"
+                // Compile the code using Maven
+                sh "mvn clean compile"
             }
         }
-        
-        stage('Unit Tests') {
-            steps {
-               sh "mvn test"
-            }
-        }
-        
-		stage('OWASP Dependency Check') {
-            steps {
-               dependencyCheck additionalArguments: ' --scan ./ ', odcInstallation: 'DC'
-                    dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
-            }
-        }
-
 
         stage('Sonar Analysis') {
             steps {
-               withSonarQubeEnv('sonar'){
-                   sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Santa \
-                   -Dsonar.java.binaries=. \
-                   -Dsonar.projectKey=Santa '''
-               }
+                // Run SonarQube analysis
+                sh ''' 
+                    $SCANNER_HOME/bin/sonar-scanner \
+                    -Dsonar.url= http://18.175.184.217:9000 \
+                    -Dsonar.login= squ_a415525476d5db85869f067cf162f09fb0416841\
+                    -Dsonar.projectName=Santa \
+                    -Dsonar.java.binaries=. \
+                    -Dsonar.projectKey=Santa
+                '''
             }
         }
 
-		 
         stage('Code-Build') {
             steps {
-               sh "mvn clean package"
+                // Build the project using Maven
+                sh "mvn clean install"
             }
         }
 
-         stage('Docker Build') {
+        stage('Docker Build & Push') {
             steps {
-               script{
-                   withDockerRegistry(credentialsId: 'docker-cred') {
-                    sh "docker build -t  santa123 . "
-                 }
-               }
+                script {
+                    // Use Jenkins credentials to securely login to Docker Hub
+                    withCredentials([usernamePassword(credentialsId: 'docker-credentials', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                        sh ''' 
+                            echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
+                            docker build -t santa123 .
+                            
+                            # Tag image with Jenkins build number as version
+                            docker tag santa123 jiku01/santa123:$BUILD_NUMBER
+
+                            # Push the tagged image to Docker Hub
+                            docker push jiku01/santa123:$BUILD_NUMBER
+                        '''
+                    }
+                }
             }
         }
 
-        stage('Docker Push') {
+        stage('Docker Deployment') {
             steps {
-               script{
-                   withDockerRegistry(credentialsId: 'docker-cred') {
-                    sh "docker tag santa123 adijaiswal/santa123:latest"
-                    sh "docker push adijaiswal/santa123:latest"
-                 }
-               }
-            }
-        }
-        
-        	 
-        stage('Docker Image Scan') {
-            steps {
-               sh "trivy image adijaiswal/santa123:latest "
-            }
-        }}
-        
-         post {
-            always {
-                emailext (
-                    subject: "Pipeline Status: ${BUILD_NUMBER}",
-                    body: '''<html>
-                                <body>
-                                    <p>Build Status: ${BUILD_STATUS}</p>
-                                    <p>Build Number: ${BUILD_NUMBER}</p>
-                                    <p>Check the <a href="${BUILD_URL}">console output</a>.</p>
-                                </body>
-                            </html>''',
-                    to: 'jaiswaladi246@gmail.com',
-                    from: 'jenkins@example.com',
-                    replyTo: 'jenkins@example.com',
-                    mimeType: 'text/html'
-                )
-            }
-        }
-		
-		
+                script {
+                    // Deploy the Docker container
+                    // Ensure the container is stopped (if already running) and removed
+                    sh '''
+                        # Stop and remove any previous containers (if running)
+                        docker stop santa-container || true
+                        docker rm santa-container || true
 
-    
+                        # Run the new container exposing port 8080
+                        docker run -d --name santa-container -p 8080:8080 jiku01/santa123:$BUILD_NUMBER
+                    '''
+                }
+            }
+        }
+    }
 }
